@@ -1,0 +1,24 @@
+[package]
+name = "tower-cgi"
+version = "0.0.1"
+edition = "2021"
+authors = ["Rodrigo Navarro <rnavarro@rnavarro.com.br>"]
+edition = "2018"
+license = "MIT"
+repository = "https://github.com/reu/tower-cgi"
+categories = ["asynchronous", "network-programming", "web-programming"]
+keywords = ["cgi", "io", "async", "futures", "service", "http", "tower"]
+
+[dependencies]
+futures = "0.3"
+http = "0.2"
+httparse = "1.5"
+hyper = { version = "0.14.16", features = ["http1", "http2", "stream"] }
+tokio = { version = "1.16.1", features = ["io-std", "macros", "process"] }
+tokio-util = { version = "0.6.9", features = ["io"] }
+tower = { version = "0.4.11", features = ["util"] }
+
+[dev-dependencies]
+indoc = "1.0.3"
+tempfile = "3.3.0"
+tokio = { version = "1.16.1", features = ["io-std", "macros", "process", "rt", "test-util"] }
