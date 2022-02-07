@@ -4,6 +4,7 @@ version = "0.0.1"
 edition = "2021"
 authors = ["Rodrigo Navarro <rnavarro@rnavarro.com.br>"]
 license = "MIT"
+description = "Tower services for CGI applications"
 repository = "https://github.com/reu/tower-cgi"
 categories = ["asynchronous", "network-programming", "web-programming"]
 keywords = ["cgi", "tower", "async", "service", "http"]
