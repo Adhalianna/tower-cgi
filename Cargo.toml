@@ -6,7 +6,7 @@ authors = ["Rodrigo Navarro <rnavarro@rnavarro.com.br>"]
 license = "MIT"
 repository = "https://github.com/reu/tower-cgi"
 categories = ["asynchronous", "network-programming", "web-programming"]
-keywords = ["cgi", "io", "async", "futures", "service", "http", "tower"]
+keywords = ["cgi", "tower", "async", "service", "http"]
 
 [dependencies]
 futures = "0.3"
