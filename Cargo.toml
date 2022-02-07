@@ -3,7 +3,6 @@ name = "tower-cgi"
 version = "0.0.1"
 edition = "2021"
 authors = ["Rodrigo Navarro <rnavarro@rnavarro.com.br>"]
-edition = "2018"
 license = "MIT"
 repository = "https://github.com/reu/tower-cgi"
 categories = ["asynchronous", "network-programming", "web-programming"]
