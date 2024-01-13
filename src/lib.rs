@@ -13,6 +13,7 @@ use tokio::process::Command;
 use tokio_util::io::{ReaderStream, StreamReader};
 use tower::Service;
 
+#[derive(Clone, Debug)]
 pub struct Cgi {
     path: PathBuf,
     env_clear: bool,
