@@ -4,12 +4,14 @@ use std::pin::Pin;
 use std::process::Stdio;
 use std::task::{Context, Poll};
 
+use bytes::Buf;
 use futures::{Future, FutureExt, StreamExt};
 use http::uri::{Authority, Scheme};
 use http::{header, Request, Response, StatusCode};
-use hyper::Body;
+use http_body::Body;
+use http_body_util::{BodyStream, StreamBody};
 use tokio::io::{self, AsyncBufReadExt, BufReader};
-use tokio::process::Command;
+use tokio::process::{ChildStdout, Command};
 use tokio_util::io::{ReaderStream, StreamReader};
 use tower::Service;
 
@@ -35,8 +37,13 @@ impl Cgi {
 
 type BoxedError = Box<dyn Error + Sync + Send>;
 
-impl Service<Request<Body>> for Cgi {
-    type Response = Response<Body>;
+impl<B> Service<Request<B>> for Cgi
+where
+    B: Body + Send + Unpin + 'static,
+    <B as Body>::Data: Buf + Send,
+    <B as Body>::Error: Error + Send + Sync,
+{
+    type Response = Response<StreamBody<ReaderStream<BufReader<ChildStdout>>>>;
     type Error = BoxedError;
 
     #[allow(clippy::type_complexity)]
@@ -47,7 +54,7 @@ impl Service<Request<Body>> for Cgi {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: Request<Body>) -> Self::Future {
+    fn call(&mut self, req: Request<B>) -> Self::Future {
         let script_path = self.path.clone();
         let env_clear = self.env_clear;
 
@@ -135,10 +142,22 @@ impl Service<Request<Body>> for Cgi {
             tokio::spawn(async move { child.wait().await.unwrap() });
 
             let write_request_body = async move {
-                let request_body = req
-                    .into_body()
-                    .map(|chunk| chunk.map_err(|err| io::Error::new(io::ErrorKind::Other, err)));
-                let mut request_body_reader = StreamReader::new(request_body);
+                let request_body = req.into_body();
+
+                let mut request_body_reader = StreamReader::new(
+                    BodyStream::new(request_body)
+                        .map(|chunk| {
+                            chunk.map_err(|err| io::Error::other(err)).map(|frame| {
+                                frame
+                                    .into_data()
+                                    .map_err(|_| io::Error::other("failed to read DATA frame"))
+                            })
+                        })
+                        .map(|res| match res {
+                            Ok(res) => res,
+                            Err(err) => Err(err),
+                        }),
+                );
                 io::copy(&mut request_body_reader, &mut stdin).await?;
                 Ok::<_, Self::Error>(io::copy(&mut request_body_reader, &mut stdin).await?)
             };
@@ -178,7 +197,7 @@ impl Service<Request<Body>> for Cgi {
                     )?;
 
                 let body_reader = ReaderStream::new(stdout_reader);
-                let response = response.body(Body::wrap_stream(body_reader))?;
+                let response = response.body(http_body_util::StreamBody::new(body_reader))?;
                 Ok::<_, Self::Error>(response)
             };
 
@@ -198,9 +217,10 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use http::Request;
-    use hyper::Body;
     use indoc::indoc;
     use tempfile::{NamedTempFile, TempPath};
+    use tokio::io::AsyncReadExt;
+    use tokio_util::io::StreamReader;
     use tower::ServiceExt;
 
     use crate::Cgi;
@@ -229,7 +249,9 @@ mod tests {
 
         let svc = Cgi::new(&script);
 
-        let req = Request::builder().body(Body::empty()).unwrap();
+        let req = Request::builder()
+            .body(http_body_util::Empty::<&[u8]>::new())
+            .unwrap();
         let res = svc.oneshot(req).await.unwrap();
 
         assert_eq!(res.status(), 201);
@@ -249,7 +271,9 @@ mod tests {
 
         let svc = Cgi::new(&script);
 
-        let req = Request::builder().body(Body::empty()).unwrap();
+        let req = Request::builder()
+            .body(http_body_util::Empty::<&[u8]>::new())
+            .unwrap();
         let res = svc.oneshot(req).await.unwrap();
 
         assert_eq!(res.headers()["x-some-header"], "hello");
@@ -271,7 +295,7 @@ mod tests {
 
         let req = Request::builder()
             .header("some-request-header", "hello")
-            .body(Body::empty())
+            .body(http_body_util::Empty::<&[u8]>::new())
             .unwrap();
 
         let res = svc.oneshot(req).await.unwrap();
@@ -292,12 +316,17 @@ mod tests {
 
         let svc = Cgi::new(&script);
 
-        let req = Request::builder().body(Body::empty()).unwrap();
+        let req = Request::builder()
+            .body(http_body_util::Empty::<&[u8]>::new())
+            .unwrap();
 
         let res = svc.oneshot(req).await.unwrap();
-        let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
+        let mut buf = Vec::<u8>::with_capacity(5);
+        let mut body = StreamReader::new(res.into_body());
+        body.read_to_end(&mut buf).await.unwrap();
+        dbg!(&body);
 
-        assert_eq!(&body[..], b"Hello");
+        assert_eq!(&buf[..], b"Hello");
     }
 
     #[tokio::test]
@@ -313,11 +342,17 @@ mod tests {
 
         let svc = Cgi::new(&script);
 
-        let req = Request::builder().body(Body::from(&b"input"[..])).unwrap();
+        let input = b"input";
+
+        let req = Request::builder()
+            .body(http_body_util::Full::new(&input[..]))
+            .unwrap();
 
         let res = svc.oneshot(req).await.unwrap();
-        let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
+        let mut buf = Vec::<u8>::with_capacity(5);
+        let mut body = StreamReader::new(res.into_body());
+        body.read_to_end(&mut buf).await.unwrap();
 
-        assert_eq!(&body[..], b"input");
+        assert_eq!(&buf[..], input);
     }
 }
