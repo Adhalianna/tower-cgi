@@ -36,6 +36,7 @@ impl Cgi {
 }
 
 type BoxedError = Box<dyn Error + Sync + Send>;
+pub type CgiResponse = Response<StreamBody<ReaderStream<BufReader<ChildStdout>>>>;
 
 impl<B> Service<Request<B>> for Cgi
 where
@@ -224,6 +225,7 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::Cgi;
+    use crate::CgiResponse;
 
     async fn temp_cgi_script(program: &str) -> io::Result<TempPath> {
         let mut file = NamedTempFile::new()?;
@@ -320,7 +322,7 @@ mod tests {
             .body(http_body_util::Empty::<&[u8]>::new())
             .unwrap();
 
-        let res = svc.oneshot(req).await.unwrap();
+        let res: CgiResponse = svc.oneshot(req).await.unwrap();
         let mut buf = Vec::<u8>::with_capacity(5);
         let mut body = StreamReader::new(res.into_body());
         body.read_to_end(&mut buf).await.unwrap();
@@ -348,7 +350,7 @@ mod tests {
             .body(http_body_util::Full::new(&input[..]))
             .unwrap();
 
-        let res = svc.oneshot(req).await.unwrap();
+        let res: CgiResponse = svc.oneshot(req).await.unwrap();
         let mut buf = Vec::<u8>::with_capacity(5);
         let mut body = StreamReader::new(res.into_body());
         body.read_to_end(&mut buf).await.unwrap();
