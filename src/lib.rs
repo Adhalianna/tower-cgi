@@ -71,9 +71,51 @@ where
                 .env("PATH_INFO", req.uri().path())
                 .env("PATH_TRANSLATED", &script_path)
                 .env("REQUEST_METHOD", req.method().as_str().to_ascii_uppercase())
-                // TODO: should we use request extensions to get the remote address here?
-                // .env("REMOTE_ADDR", remote_addr.ip().to_string())
-                // .env("REMOTE_PORT", remote_addr.port().to_string())
+                //TODO: clean up below
+                .env("REMOTE_HOST", req.uri().host().unwrap_or("NULL"))
+                .env(
+                    "REMOTE_ADDR",
+                    req.headers()
+                        .get("X-Forwarded-For")
+                        .map(|h| h.to_str())
+                        .transpose()
+                        .unwrap_or(Some("NULL"))
+                        .unwrap_or_else(|| {
+                            req.headers()
+                                .get("Forwarded")
+                                .map(|h| h.to_str())
+                                .transpose()
+                                .unwrap_or(Some("NULL"))
+                                .unwrap_or("NULL")
+                        }),
+                )
+                .env("REMOTE_USER", {
+                    req.uri()
+                        .authority()
+                        .map(|atrty| atrty.as_str())
+                        .map(|atrty| {
+                            let user_and_maybe_pass =
+                                atrty.split_once('@').unwrap_or((atrty, "")).0;
+                            let user = user_and_maybe_pass
+                                .split_once(':')
+                                .unwrap_or((user_and_maybe_pass, ""))
+                                .0;
+                            user.to_owned()
+                        })
+                        .unwrap_or_else(|| {
+                            req.headers()
+                                .get("WWW-Authenticate")
+                                .and_then(|h| {
+                                    let user_id = http_auth_basic::Credentials::from_header(
+                                        h.to_str().unwrap_or("").to_owned(),
+                                    )
+                                    .map_or("NULL".to_owned(), |creds| creds.user_id);
+                                    Some(user_id)
+                                })
+                                .unwrap_or("NULL".to_owned())
+                        })
+                })
+                //TODO: clean up above
                 .env("SCRIPT_NAME", req.uri().path())
                 .env(
                     "SERVER_NAME",
