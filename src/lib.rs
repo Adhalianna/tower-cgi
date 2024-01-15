@@ -55,6 +55,10 @@ where
         Poll::Ready(Ok(()))
     }
 
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(skip_all, fields(request_meta_vars, http_protocol_vars))
+    )]
     fn call(&mut self, req: Request<B>) -> Self::Future {
         let script_path = self.path.clone();
         let env_clear = self.env_clear;
@@ -65,15 +69,16 @@ where
             let mut cmd = Command::new(&script_path);
             let cmd = if env_clear { cmd.env_clear() } else { &mut cmd };
 
-            let mut child = cmd
-                .env("GATEWAY_INTERFACE", "CGI/1.1")
-                .env("QUERY_STRING", req.uri().query().unwrap_or_default())
-                .env("PATH_INFO", req.uri().path())
-                .env("PATH_TRANSLATED", &script_path)
-                .env("REQUEST_METHOD", req.method().as_str().to_ascii_uppercase())
-                //TODO: clean up below
-                .env("REMOTE_HOST", req.uri().host().unwrap_or("NULL"))
-                .env(
+            let request_meta_vars = [
+                ("GATEWAY_INTERFACE", "CGI/1.1"),
+                ("QUERY_STRING", req.uri().query().unwrap_or_default()),
+                ("PATH_INFO", req.uri().path()),
+                (
+                    "REQUEST_METHOD",
+                    &req.method().as_str().to_ascii_uppercase(),
+                ),
+                ("REMOTE_HOST", req.uri().host().unwrap_or_default()),
+                (
                     "REMOTE_ADDR",
                     req.headers()
                         .get("X-Forwarded-For")
@@ -88,9 +93,9 @@ where
                                 .unwrap_or(Some("NULL"))
                                 .unwrap_or("NULL")
                         }),
-                )
-                .env("REMOTE_USER", {
-                    req.uri()
+                ),
+                ("REMOTE_USER", {
+                    &req.uri()
                         .authority()
                         .map(|atrty| atrty.as_str())
                         .map(|atrty| {
@@ -114,21 +119,20 @@ where
                                 })
                                 .unwrap_or("NULL".to_owned())
                         })
-                })
-                //TODO: clean up above
-                .env("SCRIPT_NAME", req.uri().path())
-                .env(
+                }),
+                ("SCRIPT_NAME", req.uri().path()),
+                (
                     "SERVER_NAME",
-                    req.headers()
+                    &req.headers()
                         .get(header::HOST)
                         .and_then(|val| val.to_str().ok())
                         .and_then(|host| host.parse::<Authority>().ok())
                         .map(|authority| authority.host().to_owned())
                         .unwrap_or_default(),
-                )
-                .env(
+                ),
+                (
                     "SERVER_PORT",
-                    req.uri()
+                    &req.uri()
                         .port()
                         .map(|port| port.to_string())
                         .or_else(|| {
@@ -146,34 +150,47 @@ where
                             _ => None,
                         })
                         .unwrap_or_else(|| "80".to_string()),
-                )
-                .env("SERVER_PROTOCOL", format!("{:?}", req.version()))
-                .env("SERVER_SOFTWARE", "tower-cgi/0.0.1")
-                .env(
+                ),
+                ("SERVER_PROTOCOL", &format!("{:?}", req.version())),
+                ("SERVER_SOFTWARE", "tower-cgi/0.0.1"),
+                (
                     "CONTENT_TYPE",
                     req.headers()
                         .get(header::CONTENT_TYPE)
                         .and_then(|val| val.to_str().ok())
                         .unwrap_or_default(),
-                )
-                .env(
+                ),
+                (
                     "CONTENT_LENGTH",
                     req.headers()
                         .get(header::CONTENT_LENGTH)
                         .and_then(|val| val.to_str().ok())
                         .unwrap_or_default(),
-                )
-                .envs(
-                    req.headers()
-                        .into_iter()
-                        .map(|(name, value)| {
-                            let name = format!("HTTP_{}", name)
-                                .replace("-", "_")
-                                .to_ascii_uppercase();
-                            Ok((name, value.to_str()?))
-                        })
-                        .collect::<Result<Vec<_>, Self::Error>>()?,
-                )
+                ),
+            ];
+            let http_protocol_vars = req
+                .headers()
+                .into_iter()
+                .map(|(name, value)| {
+                    let name = format!("HTTP_{}", name)
+                        .replace("-", "_")
+                        .to_ascii_uppercase();
+                    Ok((name, value.to_str()?))
+                })
+                .collect::<Result<Vec<_>, Self::Error>>()?;
+
+            #[cfg(feature = "tracing")]
+            {
+                tracing::Span::current()
+                    .record("request_meta_vars", format!("{:?}", &request_meta_vars));
+                tracing::Span::current()
+                    .record("http_protocol_vars", format!("{:?}", &http_protocol_vars));
+            }
+
+            let mut child = cmd
+                .env("PATH_TRANSLATED", &script_path)
+                .envs(request_meta_vars)
+                .envs(http_protocol_vars)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::inherit())
